@@ -25,19 +25,17 @@ const NODE_HEIGHT = 36
 const RANKSEP = 48       // horizontal spacing between columns (LR)
 const LEFT_MARGIN = 96   // left margin for the root column anchor
 
-
-/** Make 33 first-level children fit vertically in the current viewport. */
+/** Compute vertical node separation to fit the current number of first-level children. */
 function computeNodesep(firstLevelCount: number) {
   const vh = typeof window !== 'undefined' ? window.innerHeight : 800
-  // tighter stack so all 33 fit more comfortably without manual zoom
-  // here -> CHANGE THIS TO CHANGE FONT SIZING INSIDE THE GRAPH AND ALSO THE VERTICAL NODE SPACES
+  // CHANGE HERE to affect font sizing inside nodes & vertical spacing feel
   const topBottomPad = 80
   const available = Math.max(220, vh - topBottomPad)
   return Math.max(10, Math.min(20, available / Math.max(1, firstLevelCount - 1)))
 }
 
-/** Normalize raw OSINT data to a tree and ensure we have exactly `limitKids` children on the root. */
-function toTree(raw: any, rootLabel: string, limitKids: number): Tree {
+/** Normalize raw OSINT data to a tree. (No padding; optionally cap elsewhere.) */
+function toTree(raw: any, rootLabel: string): Tree {
   let children: RawNode[] = []
   if (Array.isArray(raw)) {
     children = raw
@@ -52,18 +50,11 @@ function toTree(raw: any, rootLabel: string, limitKids: number): Tree {
       })
     }
   }
-
-  let first = (children || []).slice(0, limitKids)
-  if (first.length < limitKids) {
-    const missing = limitKids - first.length
-    for (let i = 0; i < missing; i++) first.push({ name: `Channel ${i + 1}`, children: [] })
-  }
-  return { name: rootLabel || 'PIE.ai', children: first }
+  return { name: rootLabel || 'PIE.ai', children: children || [] }
 }
 
 /** Approximate a single-line width for a node label at our font size. */
 function measureNodeWidth(label: string, isRoot: boolean) {
-  // With the larger text size, assume a slightly higher px/char for children.
   const pxPerChar = isRoot ? 8.8 : 9.8
   const base = (label?.length || 0) * pxPerChar + 24 /* padding headroom */
   const min = NODE_WIDTH_BASE
@@ -71,11 +62,11 @@ function measureNodeWidth(label: string, isRoot: boolean) {
   return Math.max(min, Math.min(max, Math.round(base)))
 }
 
-/** Build VISIBLE subgraph only (root + 33 kids + expanded branches). */
+/** Build VISIBLE subgraph only (root + first-level kids + expanded branches). */
 function buildVisibleGraph(
   tree: Tree,
   expanded: Set<string>,
-  limitKids: number,
+  limitKids: number | undefined,
   nodesep: number
 ) {
   const nodes: any[] = []
@@ -84,7 +75,8 @@ function buildVisibleGraph(
   g.setGraph({ rankdir: 'LR', nodesep, ranksep: RANKSEP, marginx: 16, marginy: 16 })
   g.setDefaultEdgeLabel(() => ({}))
 
-  const firstLevelCount = Math.min(limitKids, tree.children?.length || 0)
+  const totalKids = tree.children?.length ?? 0
+  const firstLevelCount = typeof limitKids === 'number' ? Math.min(limitKids, totalKids) : totalKids
   const rootId = '0'
 
   function walk(n: RawNode, path: string, parentId: string | null, depth: number) {
@@ -102,12 +94,12 @@ function buildVisibleGraph(
       width,
       height: NODE_HEIGHT,
       draggable: false,
-      style: {
-        width, /* let the box expand to single line where possible */
-      }
+      style: { width },
     })
 
-    if (parentId) edges.push({ id: parentId + '-' + id, source: parentId, target: id, type: 'bezier' })
+    if (parentId) {
+      edges.push({ id: parentId + '-' + id, source: parentId, target: id, type: 'bezier' })
+    }
 
     if (depth === 0) {
       ;(n.children || []).slice(0, firstLevelCount).forEach((ch, i) => walk(ch, `${path}.${i}`, id, depth + 1))
@@ -135,8 +127,6 @@ function buildVisibleGraph(
     nodes.forEach((n: any) => { n.position = { x: n.position.x + dx, y: n.position.y } })
   }
 
-
-
   const childCount = new Map<string, number>()
   nodes.forEach((n) => childCount.set(n.id, 0))
   edges.forEach((e) => childCount.set(e.source, (childCount.get(e.source) || 0) + 1))
@@ -159,13 +149,12 @@ function styleForNode({
 }) {
   const base: any = {
     borderRadius: 12,
-    padding: '5px 8px',        /* slightly tighter to allow bigger font */
+    padding: '5px 8px',
     fontWeight: 600,
-    fontSize: isRoot ? 17 : 18, /* larger font on children */
-    whiteSpace: 'nowrap',       /* single line only */
+    fontSize: isRoot ? 17 : 18,
+    whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-
     color: 'white',
     border: '1px solid rgba(255,255,255,0.16)',
     transition: 'transform .22s ease, box-shadow .22s ease, background .22s ease',
@@ -184,7 +173,6 @@ function styleForNode({
   }
 
   if (isActive) {
-    // base.transform = 'scale(1.05)'
     base.boxShadow = '0 16px 36px rgba(0,0,0,0.5), 0 0 0 6px rgba(122,162,255,0.22)'
   }
 
@@ -206,7 +194,9 @@ async function tryFetchArf() {
 /** Reapply the original first-level order to the y-positions after Dagre layout. */
 function preserveDirectOrder(nodes: any[], rootId: string, directOrder: string[]) {
   const idToNode = new Map(nodes.map((n) => [n.id, n]))
-  const directIdsNow = nodes.filter((n) => n.id.startsWith(`${rootId}.`) && n.id.split('.').length === 2).map((n) => n.id)
+  const directIdsNow = nodes
+    .filter((n) => n.id.startsWith(`${rootId}.`) && n.id.split('.').length === 2)
+    .map((n) => n.id)
   const directNodesNow = directIdsNow.map((id) => idToNode.get(id)).filter(Boolean)
   if (directNodesNow.length === 0) return nodes
 
@@ -224,15 +214,15 @@ function preserveDirectOrder(nodes: any[], rootId: string, directOrder: string[]
 
 export default function OsintGraph({
   rootLabel,
-  limitKids = 25,
-  seedPositions, // optional (we have an internal fallback that matches Bridge/NodeBurst)
+  limitKids,          // ⬅ optional; omit to show all first-level children
+  seedPositions,      // optional (we have an internal fallback that matches Bridge/NodeBurst)
 }: {
   rootLabel: string
   limitKids?: number
   seedPositions?: Pos[]
 }) {
   const rfRef = useRef<ReactFlowInstance | null>(null)
-  const [tree, setTree] = useState<Tree>(() => toTree(snapshot, rootLabel, limitKids))
+  const [tree, setTree] = useState<Tree>(() => toTree(snapshot, rootLabel))
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [activeId, setActiveId] = useState<string | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState([])
@@ -247,17 +237,18 @@ export default function OsintGraph({
     let alive = true
     tryFetchArf().then((raw) => {
       if (!alive || !raw) return
-      setTree(toTree(raw, rootLabel, limitKids))
+      setTree(toTree(raw, rootLabel))
     })
     return () => { alive = false }
-  }, [rootLabel, limitKids])
+  }, [rootLabel])
 
   const visible = useMemo(() => {
-    const firstCount = Math.min(limitKids, tree.children?.length || 0)
+    const totalKids = tree.children?.length ?? 0
+    const firstCount = typeof limitKids === 'number' ? Math.min(limitKids, totalKids) : totalKids
     const nodesep = computeNodesep(firstCount)
     const built = buildVisibleGraph(tree, expanded, limitKids, nodesep)
 
-    // Initialize preserved order once (on first build)
+    // Initialize preserved order once (on very first build)
     if (!directOrderRef.current) {
       directOrderRef.current = built.directKids.slice()
     }
@@ -271,6 +262,15 @@ export default function OsintGraph({
 
     return { ...built, nodes: orderedNodes }
   }, [tree, expanded, limitKids])
+
+  // Refresh preserved order if the set of direct children has changed (e.g., after data edits)
+  useEffect(() => {
+    const currentKey = (directOrderRef.current || []).join('|')
+    const nextKey = visible.directKids.join('|')
+    if (currentKey !== nextKey) {
+      directOrderRef.current = visible.directKids.slice()
+    }
+  }, [visible.directKids])
 
   // Initial morph: seed positions (left column) → Dagre layout
   useEffect(() => {
@@ -293,7 +293,7 @@ export default function OsintGraph({
           })
 
     // Root starts anchored at the first column
-    const avgY = seeds.reduce((a, p) => a + p.y, 0) / seeds.length
+    const avgY = seeds.length ? seeds.reduce((a, p) => a + p.y, 0) / seeds.length : vh / 2
     const rootStart = { x: LEFT_MARGIN + (NODE_WIDTH_BASE / 2), y: avgY }
 
     const initialVisible = new Set([rootId, ...directKids])
@@ -340,17 +340,13 @@ export default function OsintGraph({
       requestAnimationFrame(() => {
         if (rfRef.current) fitViewLeftAligned(rfRef.current, 0.08, 56)
       })
-
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // run once
 
-
   // Helper: zoom out to show everything, then pan so the graph is left-aligned on screen
   function fitViewLeftAligned(instance: ReactFlowInstance, padding = 0.08, marginPx = 16) {
-    // First fitView to compute a good zoom
     instance.fitView({ padding, includeHiddenNodes: false })
-    // Next frame, pan so the left-most node touches our left margin
     requestAnimationFrame(() => {
       try {
         const vp = instance.getViewport()  // { x, y, zoom }
@@ -359,14 +355,12 @@ export default function OsintGraph({
         if (!allNodes || allNodes.length === 0) return
         const minX = Math.min(...allNodes.map(n => (n.positionAbsolute?.x ?? n.position.x)))
         const minY = Math.min(...allNodes.map(n => (n.positionAbsolute?.y ?? n.position.y)))
-        // Align left/top edges to small margins
         const targetX = marginPx - minX * zoom
         const targetY = 24 - minY * zoom
         instance.setViewport({ x: targetX, y: targetY, zoom })
       } catch {}
     })
   }
-
 
   // Subsequent updates (expands/refresh): layout only visible nodes; preserve order.
   useEffect(() => {
@@ -401,26 +395,32 @@ export default function OsintGraph({
     })
   }
 
+  const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const didFitRef = useRef(false);
+
+  // Ensure we start fully zoomed out with ALL nodes visible on first render.
+  // We wait a frame so custom nodes can measure their size before fitView runs.
+  useEffect(() => {
+    if (!rfInstanceRef.current || didFitRef.current || nodes.length === 0) return;
+    const id = requestAnimationFrame(() => {
+      rfInstanceRef.current?.fitView({
+        includeHiddenNodes: true,
+        padding: 0.2,
+        duration: 0,
+      });
+      didFitRef.current = true;
+    });
+    return () => cancelAnimationFrame(id);
+  }, [nodes.length]);
+
   return (
-    <div style={{ position: 'absolute', inset: 0 }}>
-      <ReactFlow
-        onInit={(instance) => { rfRef.current = instance }}
-        fitView
-        fitViewOptions={{ padding: 0.08 }}
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={onNodeClick}
-        panOnDrag
-        zoomOnScroll
-        zoomOnPinch
-        minZoom={0.25}
-        maxZoom={2}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
-        <Controls position="bottom-right" />
-      </ReactFlow>
-    </div>
-  )
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      /* prevent the built-in auto-fit on mount; we run it once in the effect above */
+      fitView={false}
+      onInit={(instance) => { rfInstanceRef.current = instance; }}
+    />
+  );
+
 }
