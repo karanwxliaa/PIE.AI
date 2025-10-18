@@ -192,12 +192,9 @@ async function tryFetchArf() {
     const r = await fetch('/arf.json', { cache: 'no-cache' })
     if (r.ok) return await r.json()
   } catch {}
-  try {
-    const r = await fetch('/api/arf', { cache: 'no-cache' })
-    if (r.ok) return await r.json()
-  } catch {}
   return null
 }
+
 
 /** Reapply the original first-level order to the y-positions after Dagre layout. */
 function preserveDirectOrder(nodes: any[], rootId: string, directOrder: string[]) {
