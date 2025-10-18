@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle } from 'react'
 import ReactFlow, {
   Background,
   BackgroundVariant,
@@ -16,6 +16,14 @@ import snapshot from '../data/osint-snapshot.json'
 type RawNode = { name: string; type?: string; url?: string; children?: RawNode[] }
 type Tree = RawNode
 type Pos = { x: number; y: number }
+
+const norm = (s: string) => s?.trim().toLowerCase()
+
+export type OsintGraphHandle = {
+  expandByLabels: (labels: string[]) => Promise<void>
+  expandPath: (segments: string[]) => Promise<void>
+  fit: () => void
+}
 
 type NodeData = { label: string; url?: string; depth: number; hasChildren: boolean }
 
@@ -212,15 +220,15 @@ function preserveDirectOrder(nodes: any[], rootId: string, directOrder: string[]
   return nodes
 }
 
-export default function OsintGraph({
-  rootLabel,
-  limitKids,          // ⬅ optional; omit to show all first-level children
-  seedPositions,      // optional (we have an internal fallback that matches Bridge/NodeBurst)
-}: {
+const OsintGraph = forwardRef<OsintGraphHandle, {
   rootLabel: string
   limitKids?: number
   seedPositions?: Pos[]
-}) {
+}>(function OsintGraph({
+  rootLabel,
+  limitKids,          // ⬅ optional; omit to show all first-level children
+  seedPositions,      // optional (we have an internal fallback that matches Bridge/NodeBurst)
+}, ref) {
   const rfRef = useRef<ReactFlowInstance | null>(null)
   const [tree, setTree] = useState<Tree>(() => toTree(snapshot, rootLabel))
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -371,7 +379,7 @@ export default function OsintGraph({
       const isLeaf = !(n.data as NodeData).hasChildren
       return {
         ...n,
-        style: styleForNode({ isRoot: n.id === rootId, isLeaf, isActive: activeId === n.id }),
+        style: styleForNode({ isRoot: n.id === rootId, isLeaf, isActive: activeId === n.id } ),
       }
     })
 
@@ -413,14 +421,86 @@ export default function OsintGraph({
     return () => cancelAnimationFrame(id);
   }, [nodes.length]);
 
-  return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      /* prevent the built-in auto-fit on mount; we run it once in the effect above */
-      fitView={false}
-      onInit={(instance) => { rfInstanceRef.current = instance; }}
-    />
-  );
 
-}
+  // ---------- Imperative API (for "Next" scripted demo) ----------
+  const firstLevelCount = useMemo(() => {
+    const totalKids = tree.children?.length ?? 0
+    return typeof limitKids === 'number' ? Math.min(limitKids, totalKids) : totalKids
+  }, [tree, limitKids])
+
+  function resolveFirstLevelIdByName(label: string): string | null {
+    const kids = (tree.children || []).slice(0, firstLevelCount)
+    const i = kids.findIndex((c) => norm(c.name) === norm(label))
+    return i >= 0 ? `0.${i}` : null
+  }
+
+  function resolvePathIds(segments: string[]): string[] {
+    if (!segments || segments.length === 0) return []
+    let id = '0'
+    let node: RawNode = tree
+    const out: string[] = []
+    for (let depth = 0; depth < segments.length; depth++) {
+      const seg = segments[depth]
+      const children =
+        depth === 0 ? (node.children || []).slice(0, firstLevelCount) : (node.children || [])
+      const idx = children.findIndex((c) => norm(c.name) === norm(seg))
+      if (idx < 0) return out
+      id = `${id}.${idx}`
+      out.push(id)
+      node = children[idx]
+    }
+    return out
+  }
+
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  useImperativeHandle(ref, () => ({
+    expandByLabels: async (labels: string[]) => {
+      for (const label of labels) {
+        const id = resolveFirstLevelIdByName(label)
+        if (!id) continue
+        setExpanded((prev) => { const next = new Set(prev); next.add(id); return next })
+        setActiveId(id)
+        await wait(240)
+        setActiveId(null)
+      }
+    },
+    expandPath: async (segments: string[]) => {
+      const ids = resolvePathIds(segments)
+      for (const id of ids) {
+        setExpanded((prev) => { const next = new Set(prev); next.add(id); return next })
+        setActiveId(id)
+        await wait(220)
+        setActiveId(null)
+      }
+    },
+    fit: () => {
+      if (rfInstanceRef.current) {
+        try { fitViewLeftAligned(rfInstanceRef.current, 0.08, 56) } catch {}
+      }
+    },
+  }))
+
+
+return (
+  <ReactFlow
+    nodes={nodes}
+    edges={edges}
+    /* prevent the built-in auto-fit on mount; we run it once in the effect above */
+    fitView={false}
+    onInit={(instance) => { rfInstanceRef.current = instance; }}
+
+    /* ✅ restore interactivity */
+    onNodeClick={onNodeClick}
+    onNodesChange={onNodesChange}
+    onEdgesChange={onEdgesChange}
+
+    /* (optional but nice) allow scroll panning/zoom */
+    panOnScroll
+    zoomOnScroll
+  />
+)
+
+})
+
+export default OsintGraph
