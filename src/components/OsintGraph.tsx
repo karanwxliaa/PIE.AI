@@ -224,7 +224,7 @@ function preserveDirectOrder(nodes: any[], rootId: string, directOrder: string[]
 
 export default function OsintGraph({
   rootLabel,
-  limitKids = 33,
+  limitKids = 25,
   seedPositions, // optional (we have an internal fallback that matches Bridge/NodeBurst)
 }: {
   rootLabel: string

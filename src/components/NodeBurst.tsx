@@ -10,7 +10,7 @@ export default function NodeBurst({
   onComplete?: (positions?: Pos[]) => void
   migrateLeft?: boolean
 }) {
-  const count = 33
+  const count = 25
   const idx = useMemo(() => Array.from({ length: count }, (_, i) => i), [count])
 
 
