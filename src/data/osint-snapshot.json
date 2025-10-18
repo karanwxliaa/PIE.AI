@@ -1,0 +1,50 @@
+{
+  "name": "OSINT Framework",
+  "children": [
+    {
+      "name": "Username",
+      "children": [
+        {
+          "name": "Namechk",
+          "type": "url",
+          "url": "https://namechk.com/"
+        },
+        {
+          "name": "WhatsMyName",
+          "type": "url",
+          "url": "https://whatsmyname.app/"
+        }
+      ]
+    },
+    {
+      "name": "Email Address",
+      "children": [
+        {
+          "name": "Have I Been Pwned",
+          "type": "url",
+          "url": "https://haveibeenpwned.com/"
+        },
+        {
+          "name": "EmailRep.io",
+          "type": "url",
+          "url": "https://emailrep.io/"
+        }
+      ]
+    },
+    {
+      "name": "Domain/IP",
+      "children": [
+        {
+          "name": "Shodan",
+          "type": "url",
+          "url": "https://www.shodan.io/"
+        },
+        {
+          "name": "Censys",
+          "type": "url",
+          "url": "https://search.censys.io/"
+        }
+      ]
+    }
+  ]
+}
